@@ -22,9 +22,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from etils import epath
 import os
-import sys
-from plyfile import PlyData,PlyElement
-from pathlib import Path
 import mujoco_warp as mjwarp
 
 
