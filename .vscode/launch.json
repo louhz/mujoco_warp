@@ -11,6 +11,19 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Launch viewer",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "mujoco_warp/myViewer.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--mjcf", "/home/haozhe/Dropbox/physics/_data/allegro/wonik_allegro/scene_bluelego.xml",
+                // "--engine", "mjwarp",
+                // "--clear_kernel_cache", "false",
+                // "--ls_parallel", "false"
+              ]
         }
     ]
 }
