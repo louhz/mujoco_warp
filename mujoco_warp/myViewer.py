@@ -45,7 +45,7 @@ _MODEL_PATH = flags.DEFINE_string(
 _CLEAR_KERNEL_CACHE = flags.DEFINE_bool(
   "clear_kernel_cache", False, "Clear kernel cache (to calculate full JIT time)"
 )
-_ENGINE = flags.DEFINE_enum("engine", "mjc", ["mjwarp", "mjc"], "Simulation engine")
+_ENGINE = flags.DEFINE_enum("engine", "mjwarp", ["mjwarp", "mjc"], "Simulation engine")
 _LS_PARALLEL = flags.DEFINE_bool(
   "ls_parallel", False, "Engine solver with parallel linesearch"
 )
@@ -86,7 +86,7 @@ def _main(argv: Sequence[str]) -> None:
 
 
   mjm = mujoco.MjModel.from_xml_path(_MODEL_PATH.value)
-  mjm.opt.integrator == mujoco.mjtIntegrator.mjINT_EULER
+  mjm.opt.integrator = mujoco.mjtIntegrator.mjINT_EULER
   # mjm.opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
   is_sparse = False
   mjm.opt.jacobian = is_sparse
@@ -161,36 +161,40 @@ def _main(argv: Sequence[str]) -> None:
 
   viewer = mujoco.viewer.launch_passive(mjm, mjd, key_callback=key_callback)
   with viewer:
-    while True:
-      start = time.time()
+    for i in range(100000):
+        start = time.time()
+        # Advance time based on the step count:
+        # mjd.time += mjm.opt.timestep 
+        # print(f"Step {i}: Time = {mjd.time:.3f}s")
+        # mujoco.mj_forward(mjm, mjd) # advance time
+        if _ENGINE.value == "mjc":
+          # mjd.ctrl[:] = raw_action
+    # forward the model
+          mujoco.mj_step(mjm, mjd)
+        else:  # mjwarp
+          # TODO(robotics-simulation): recompile when changing disable flags, etc.
+          wp.copy(d.ctrl, wp.array([mjd.ctrl.astype(np.float32)]))
+          wp.copy(d.act, wp.array([mjd.act.astype(np.float32)]))
+          wp.copy(d.xfrc_applied, wp.array([mjd.xfrc_applied.astype(np.float32)]))
+          wp.copy(d.qpos, wp.array([mjd.qpos.astype(np.float32)]))
+          wp.copy(d.qvel, wp.array([mjd.qvel.astype(np.float32)]))
+          d.time = mjd.time
 
-      if _ENGINE.value == "mjc":
-        mjd.ctrl[:] = raw_action
-        mujoco.mj_step(mjm, mjd)
-      else:  # mjwarp
-        # TODO(robotics-simulation): recompile when changing disable flags, etc.
-        wp.copy(d.ctrl, wp.array([mjd.ctrl.astype(np.float32)]))
-        wp.copy(d.act, wp.array([mjd.act.astype(np.float32)]))
-        wp.copy(d.xfrc_applied, wp.array([mjd.xfrc_applied.astype(np.float32)]))
-        wp.copy(d.qpos, wp.array([mjd.qpos.astype(np.float32)]))
-        wp.copy(d.qvel, wp.array([mjd.qvel.astype(np.float32)]))
-        d.time = mjd.time
+          if _VIEWER_GLOBAL_STATE["running"]:
+            wp.capture_launch(graph)
+            wp.synchronize()
+          elif _VIEWER_GLOBAL_STATE["step_once"]:
+            _VIEWER_GLOBAL_STATE["step_once"] = False
+            wp.capture_launch(graph)
+            wp.synchronize()
 
-        if _VIEWER_GLOBAL_STATE["running"]:
-          wp.capture_launch(graph)
-          wp.synchronize()
-        elif _VIEWER_GLOBAL_STATE["step_once"]:
-          _VIEWER_GLOBAL_STATE["step_once"] = False
-          wp.capture_launch(graph)
-          wp.synchronize()
+          mjwarp.get_data_into(mjd, mjm, d)
 
-        mjwarp.get_data_into(mjd, mjm, d)
+        viewer.sync()
 
-      viewer.sync()
-
-      elapsed = time.time() - start
-      if elapsed < mjm.opt.timestep:
-        time.sleep(mjm.opt.timestep - elapsed)
+        elapsed = time.time() - start
+        if elapsed < mjm.opt.timestep:
+          time.sleep(mjm.opt.timestep - elapsed)
 
 
 def main():
