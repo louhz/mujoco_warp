@@ -19,7 +19,9 @@
             "program": "mujoco_warp/myViewer.py",
             "console": "integratedTerminal",
             "args": [
-                "--mjcf", "/home/haozhe/Dropbox/physics/_data/allegro/wonik_allegro/scene_bluelego.xml",
+                // "--mjcf", "/home/haozhe/Dropbox/physics/_data/allegro/wonik_allegro/scene_bluelego.xml",
+                // "--mjcf", "/home/haozhe/Desktop/robotic_toolset/dextwin/submodules/mujoco_warp/mujoco_warp/test_data/humanoid/humanoid.xml",
+                "--mjcf","/home/haozhe/Dropbox/physics/_data/allegro/franka/franka_right_hand.xml"
                 // "--engine", "mjwarp",
                 // "--clear_kernel_cache", "false",
                 // "--ls_parallel", "false"

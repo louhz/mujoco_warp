@@ -93,28 +93,29 @@ def _main(argv: Sequence[str]) -> None:
   mjm.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
   print("Number of actuators (mj_model.nu):", mjm.nu)
   mjd = mujoco.MjData(mjm)
+  # mjm.body_mass[0] = 0.5
   mujoco.mj_forward(mjm, mjd)
-  hand_joint_names = [
-        "ffj0",
-        "ffj1",
-        "ffj2",
-        "ffj3",
-        "mfj0",
-        "mfj1",
-        "mfj2",
-        "mfj3",
-        "rfj0",
-        "rfj1",
-        "rfj2",
-        "rfj3",
-        "thj0",
-        "thj1",
-        "thj2",
-        "thj3",
-    ]
-    # Initialize those joints to some angle (optional)
-  init_hand_angles = [0.0] * 16  # in radians
-  set_joint_angles(mjm, mjd, hand_joint_names, init_hand_angles)
+  # hand_joint_names = [
+  #       "ffj0",
+  #       "ffj1",
+  #       "ffj2",
+  #       "ffj3",
+  #       "mfj0",
+  #       "mfj1",
+  #       "mfj2",
+  #       "mfj3",
+  #       "rfj0",
+  #       "rfj1",
+  #       "rfj2",
+  #       "rfj3",
+  #       "thj0",
+  #       "thj1",
+  #       "thj2",
+  #       "thj3",
+  #   ]
+  #   # Initialize those joints to some angle (optional)
+  # init_hand_angles = [0.0] * 16  # in radians
+  # set_joint_angles(mjm, mjd, hand_joint_names, init_hand_angles)
   # mjm.opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
   raw_action = np.array([
         0.18946200609207153,
@@ -143,7 +144,7 @@ def _main(argv: Sequence[str]) -> None:
     m = mjwarp.put_model(mjm)
     m.opt.ls_parallel = _LS_PARALLEL.value
     d = mjwarp.put_data(mjm, mjd)
-    d.ctrl.numpy()[0][:] = init_hand_angles
+    # d.ctrl.numpy()[0][:] = init_hand_angles
     if _CLEAR_KERNEL_CACHE.value:
       wp.clear_kernel_cache()
 
@@ -170,6 +171,7 @@ def _main(argv: Sequence[str]) -> None:
         if _ENGINE.value == "mjc":
           # mjd.ctrl[:] = raw_action
     # forward the model
+          print(mjm.body_mass)
           mujoco.mj_step(mjm, mjd)
         else:  # mjwarp
           # TODO(robotics-simulation): recompile when changing disable flags, etc.

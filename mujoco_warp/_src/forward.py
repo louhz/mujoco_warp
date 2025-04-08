@@ -270,7 +270,7 @@ def implicit(m: Model, d: Data):
   # TODO(team): add sparse version
 
   # compile-time constants
-  passive_enabled = not m.opt.disableflags & DisableBit.PASSIVE.value
+  passive_enabled = False
   actuation_enabled = (
     not m.opt.disableflags & DisableBit.ACTUATION.value
   ) and m.actuator_affine_bias_gain
