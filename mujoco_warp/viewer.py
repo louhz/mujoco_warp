@@ -16,6 +16,7 @@
 """An example integration of MJWarp with the MuJoCo viewer."""
 
 import logging
+import pickle
 import time
 from typing import Sequence
 
@@ -28,20 +29,17 @@ from absl import flags
 
 import mujoco_warp as mjwarp
 
-_MODEL_PATH = flags.DEFINE_string(
-  "mjcf", None, "Path to a MuJoCo MJCF file.", required=True
-)
-_CLEAR_KERNEL_CACHE = flags.DEFINE_bool(
-  "clear_kernel_cache", False, "Clear kernel cache (to calculate full JIT time)"
-)
+_MODEL_PATH = flags.DEFINE_string("mjcf", None, "Path to a MuJoCo MJCF file.", required=True)
+_CLEAR_KERNEL_CACHE = flags.DEFINE_bool("clear_kernel_cache", False, "Clear kernel cache (to calculate full JIT time)")
 _ENGINE = flags.DEFINE_enum("engine", "mjwarp", ["mjwarp", "mjc"], "Simulation engine")
-_LS_PARALLEL = flags.DEFINE_bool(
-  "ls_parallel", False, "Engine solver with parallel linesearch"
-)
+_CONE = flags.DEFINE_enum("cone", "pyramidal", ["pyramidal", "elliptic"], "Friction cone type")
+_LS_PARALLEL = flags.DEFINE_bool("ls_parallel", False, "Engine solver with parallel linesearch")
 _VIEWER_GLOBAL_STATE = {
   "running": True,
   "step_once": False,
 }
+_NCONMAX = flags.DEFINE_integer("nconmax", None, "Maximum number of contacts.")
+_NJMAX = flags.DEFINE_integer("njmax", None, "Maximum number of constraints.")
 
 
 def key_callback(key: int) -> None:
@@ -50,6 +48,26 @@ def key_callback(key: int) -> None:
     logging.info("RUNNING = %s", _VIEWER_GLOBAL_STATE["running"])
   elif key == 46:  # period
     _VIEWER_GLOBAL_STATE["step_once"] = True
+
+
+def _load_model():
+  spec = mujoco.MjSpec.from_file(_MODEL_PATH.value)
+  # check if the file has any mujoco.sdf test plugins
+  if any(p.plugin_name.startswith("mujoco.sdf") for p in spec.plugins):
+    from mujoco_warp.test_data.collision_sdf.utils import register_sdf_plugins as register_sdf_plugins
+
+    register_sdf_plugins(mjwarp.collision_sdf)
+  return spec.compile()
+
+
+def _compile_step(m, d):
+  mjwarp.step(m, d)
+  # double warmup to work around issues with compilation during graph capture:
+  mjwarp.step(m, d)
+  # capture the whole step function as a CUDA graph
+  with wp.ScopedCapture() as capture:
+    mjwarp.step(m, d)
+  return capture.graph
 
 
 def _main(argv: Sequence[str]) -> None:
@@ -61,7 +79,11 @@ def _main(argv: Sequence[str]) -> None:
   if _MODEL_PATH.value.endswith(".mjb"):
     mjm = mujoco.MjModel.from_binary_path(_MODEL_PATH.value)
   else:
-    mjm = mujoco.MjModel.from_xml_path(_MODEL_PATH.value)
+    mjm = _load_model()
+  if _CONE.value == "pyramidal":
+    mjm.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+  elif _CONE.value == "elliptic":
+    mjm.opt.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
   mjd = mujoco.MjData(mjm)
   mujoco.mj_forward(mjm, mjd)
 
@@ -69,22 +91,17 @@ def _main(argv: Sequence[str]) -> None:
     print("Engine: MuJoCo C")
   else:  # mjwarp
     print("Engine: MuJoCo Warp")
+    mjm_hash = pickle.dumps(mjm)
     m = mjwarp.put_model(mjm)
     m.opt.ls_parallel = _LS_PARALLEL.value
-    d = mjwarp.put_data(mjm, mjd)
+    d = mjwarp.put_data(mjm, mjd, nconmax=_NCONMAX.value, njmax=_NJMAX.value)
 
     if _CLEAR_KERNEL_CACHE.value:
       wp.clear_kernel_cache()
 
-    start = time.time()
     print("Compiling the model physics step...")
-    mjwarp.step(m, d)
-    # double warmup to work around issues with compilation during graph capture:
-    mjwarp.step(m, d)
-    # capture the whole step function as a CUDA graph
-    with wp.ScopedCapture() as capture:
-      mjwarp.step(m, d)
-    graph = capture.graph
+    start = time.time()
+    graph = _compile_step(m, d)
     elapsed = time.time() - start
     print(f"Compilation took {elapsed}s.")
 
@@ -96,13 +113,18 @@ def _main(argv: Sequence[str]) -> None:
       if _ENGINE.value == "mjc":
         mujoco.mj_step(mjm, mjd)
       else:  # mjwarp
-        # TODO(robotics-simulation): recompile when changing disable flags, etc.
         wp.copy(d.ctrl, wp.array([mjd.ctrl.astype(np.float32)]))
         wp.copy(d.act, wp.array([mjd.act.astype(np.float32)]))
         wp.copy(d.xfrc_applied, wp.array([mjd.xfrc_applied.astype(np.float32)]))
         wp.copy(d.qpos, wp.array([mjd.qpos.astype(np.float32)]))
         wp.copy(d.qvel, wp.array([mjd.qvel.astype(np.float32)]))
-        d.time = mjd.time
+        wp.copy(d.time, wp.array([mjd.time], dtype=wp.float32))
+
+        hash = pickle.dumps(mjm)
+        if hash != mjm_hash:
+          mjm_hash = hash
+          m = mjwarp.put_model(mjm)
+          graph = _compile_step(m, d)
 
         if _VIEWER_GLOBAL_STATE["running"]:
           wp.capture_launch(graph)

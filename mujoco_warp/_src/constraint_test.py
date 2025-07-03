@@ -17,6 +17,7 @@
 
 import mujoco
 import numpy as np
+import warp as wp
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -77,6 +78,18 @@ class ConstraintTest(parameterized.TestCase):
     """
 
     _, mjd, m, d = test_util.fixture(xml=xml, cone=cone)
+
+    for arr in (
+      d.efc.D,
+      d.efc.aref,
+      d.efc.pos,
+      d.efc.margin,
+    ):
+      arr.zero_()
+
+    # fill with nan to check whether we are not reading uninitialized values
+    d.efc.J.fill_(wp.nan)
+
     mjwarp.make_constraint(m, d)
 
     _assert_eq(d.efc.J.numpy()[: mjd.nefc, :].reshape(-1), mjd.efc_J, "efc_J")
@@ -92,16 +105,9 @@ class ConstraintTest(parameterized.TestCase):
   def test_constraints(self, cone):
     """Test constraints."""
     for key in range(3):
-      mjm, mjd, _, _ = test_util.fixture(
-        "constraints.xml", sparse=False, cone=cone, keyframe=key
-      )
-
-      mujoco.mj_forward(mjm, mjd)
-      m = mjwarp.put_model(mjm)
-      d = mjwarp.put_data(mjm, mjd)
+      mjm, mjd, m, d = test_util.fixture("constraints.xml", sparse=False, cone=cone, keyframe=key)
 
       for arr in (
-        d.efc.J,
         d.efc.D,
         d.efc.aref,
         d.efc.pos,
@@ -113,6 +119,8 @@ class ConstraintTest(parameterized.TestCase):
       ):
         arr.zero_()
 
+      d.efc.J.fill_(wp.nan)
+
       mjwarp.make_constraint(m, d)
 
       _assert_eq(d.ne.numpy()[0], mjd.ne, "ne")
@@ -121,9 +129,88 @@ class ConstraintTest(parameterized.TestCase):
       _assert_eq(d.nl.numpy()[0], mjd.nl, "nl")
       _assert_eq(d.efc.J.numpy()[: mjd.nefc, :].reshape(-1), mjd.efc_J, "efc_J")
       _assert_eq(d.efc.D.numpy()[: mjd.nefc], mjd.efc_D, "efc_D")
+      _assert_eq(d.efc.vel.numpy()[: mjd.nefc], mjd.efc_vel, "efc_vel")
       _assert_eq(d.efc.aref.numpy()[: mjd.nefc], mjd.efc_aref, "efc_aref")
       _assert_eq(d.efc.pos.numpy()[: mjd.nefc], mjd.efc_pos, "efc_pos")
       _assert_eq(d.efc.margin.numpy()[: mjd.nefc], mjd.efc_margin, "efc_margin")
+      _assert_eq(d.efc.type.numpy()[: mjd.nefc], mjd.efc_type, "efc_type")
+
+  def test_limit_tendon(self):
+    """Test limit tendon constraints."""
+    for keyframe in range(-1, 1):
+      _, mjd, m, d = test_util.fixture("tendon/tendon_limit.xml", sparse=False, keyframe=keyframe)
+
+      for arr in (d.nefc, d.nl, d.efc.J, d.efc.D, d.efc.aref, d.efc.pos, d.efc.margin):
+        arr.zero_()
+
+      mjwarp.make_constraint(m, d)
+
+      _assert_eq(d.nefc.numpy()[0], mjd.nefc, "nefc")
+      _assert_eq(d.nl.numpy()[0], mjd.nl, "nl")
+      _assert_eq(d.efc.J.numpy()[: mjd.nefc, :].reshape(-1), mjd.efc_J, "efc_J")
+      _assert_eq(d.efc.D.numpy()[: mjd.nefc], mjd.efc_D, "efc_D")
+      _assert_eq(d.efc.vel.numpy()[: mjd.nefc], mjd.efc_vel, "efc_vel")
+      _assert_eq(d.efc.aref.numpy()[: mjd.nefc], mjd.efc_aref, "efc_aref")
+      _assert_eq(d.efc.pos.numpy()[: mjd.nefc], mjd.efc_pos, "efc_pos")
+      _assert_eq(d.efc.margin.numpy()[: mjd.nefc], mjd.efc_margin, "efc_margin")
+      _assert_eq(d.efc.type.numpy()[: mjd.nefc], mjd.efc_type, "efc_type")
+
+  def test_equality_tendon(self):
+    """Test equality tendon constraints."""
+
+    _, mjd, m, d = test_util.fixture(
+      xml="""
+      <mujoco>
+        <option>
+          <flag contact="disable"/>
+        </option>
+        <worldbody>
+          <body>
+            <geom type="sphere" size=".1"/>
+            <joint name="joint0" type="hinge"/>
+          </body>
+          <body>
+            <geom type="sphere" size=".1"/>
+            <joint name="joint1" type="hinge"/>
+          </body>
+          <body>
+            <geom type="sphere" size=".1"/>
+            <joint name="joint2" type="hinge"/>
+          </body>
+        </worldbody>
+        <tendon>
+          <fixed name="tendon0">
+            <joint joint="joint0" coef=".1"/>
+          </fixed>
+          <fixed name="tendon1">
+            <joint joint="joint1" coef=".2"/>
+          </fixed>
+          <fixed name="tendon2">
+            <joint joint="joint2" coef=".3"/>
+          </fixed>
+        </tendon>
+        <equality>
+          <tendon tendon1="tendon0" tendon2="tendon1" polycoef=".1 .2 .3 .4 .5"/>
+          <tendon tendon1="tendon2" polycoef="-.1 0 0 0 0"/>
+        </equality>
+        <keyframe>
+          <key qpos=".1 .2 .3"/>
+        </keyframe>
+      </mujoco>
+    """
+    )
+
+    mjwarp.make_constraint(m, d)
+
+    _assert_eq(d.nefc.numpy()[0], mjd.nefc, "nefc")
+    _assert_eq(d.ne.numpy()[0], mjd.ne, "ne")
+    _assert_eq(d.efc.J.numpy()[: mjd.nefc, :].reshape(-1), mjd.efc_J, "efc_J")
+    _assert_eq(d.efc.D.numpy()[: mjd.nefc], mjd.efc_D, "efc_D")
+    _assert_eq(d.efc.vel.numpy()[: mjd.nefc], mjd.efc_vel, "efc_vel")
+    _assert_eq(d.efc.aref.numpy()[: mjd.nefc], mjd.efc_aref, "efc_aref")
+    _assert_eq(d.efc.pos.numpy()[: mjd.nefc], mjd.efc_pos, "efc_pos")
+    _assert_eq(d.efc.margin.numpy()[: mjd.nefc], mjd.efc_margin, "efc_margin")
+    _assert_eq(d.efc.type.numpy()[: mjd.nefc], mjd.efc_type, "efc_type")
 
 
 if __name__ == "__main__":

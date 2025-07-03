@@ -28,7 +28,7 @@ from . import test_util
 from .types import ConeType
 from .types import SolverType
 
-# tolerance for difference between MuJoCo and MJWarp smooth calculations - mostly
+# tolerance for difference between MuJoCo and MJWarp solver calculations - mostly
 # due to float precision
 _TOLERANCE = 5e-3
 
@@ -40,23 +40,16 @@ def _assert_eq(a, b, name):
 
 
 class SolverTest(parameterized.TestCase):
-  @parameterized.parameters(
-    (ConeType.PYRAMIDAL, SolverType.CG, 5, 5, False, False),
-    (ConeType.PYRAMIDAL, SolverType.NEWTON, 2, 4, False, False),
-    (ConeType.PYRAMIDAL, SolverType.NEWTON, 2, 4, True, True),
-  )
-  def test_solve(self, cone, solver_, iterations, ls_iterations, sparse, ls_parallel):
-    """Tests solve."""
+  @parameterized.product(cone=tuple(ConeType), solver_=tuple(SolverType))
+  def test_cost(self, cone, solver_):
+    """Tests cost function is correct."""
     for keyframe in range(3):
       mjm, mjd, m, d = test_util.fixture(
-        "humanoid/humanoid.xml",
+        "constraints.xml",
         keyframe=keyframe,
-        sparse=sparse,
         cone=cone,
         solver=solver_,
-        iterations=iterations,
-        ls_iterations=ls_iterations,
-        ls_parallel=ls_parallel,
+        iterations=0,
       )
 
       def cost(qacc):
@@ -68,18 +61,39 @@ class SolverTest(parameterized.TestCase):
 
       mj_cost = cost(mjd.qacc)
 
-      solver._create_context(m, d)
+      # solve with 0 iterations just intializes constraints and costs and then exits
+      mjwarp.solve(m, d)
 
       mjwarp_cost = d.efc.cost.numpy()[0] - d.efc.gauss.numpy()[0]
 
       _assert_eq(mjwarp_cost, mj_cost, name="cost")
 
+  @parameterized.parameters(
+    (ConeType.PYRAMIDAL, SolverType.CG, 5, 5, False, False),
+    (ConeType.ELLIPTIC, SolverType.CG, 5, 5, False, False),
+    (ConeType.PYRAMIDAL, SolverType.NEWTON, 2, 4, False, False),
+    (ConeType.ELLIPTIC, SolverType.NEWTON, 2, 5, False, False),
+    (ConeType.PYRAMIDAL, SolverType.NEWTON, 2, 4, True, True),
+    (ConeType.ELLIPTIC, SolverType.NEWTON, 3, 16, True, True),
+  )
+  def test_solve(self, cone, solver_, iterations, ls_iterations, sparse, ls_parallel):
+    """Tests solve."""
+    for keyframe in range(3):
+      mjm, mjd, m, d = test_util.fixture(
+        "constraints.xml",
+        keyframe=keyframe,
+        sparse=sparse,
+        cone=cone,
+        solver=solver_,
+        iterations=iterations,
+        ls_iterations=ls_iterations,
+        ls_parallel=ls_parallel,
+      )
+
       qacc_warmstart = mjd.qacc_warmstart.copy()
       mujoco.mj_forward(mjm, mjd)
       mjd.qacc_warmstart = qacc_warmstart
 
-      m = mjwarp.put_model(mjm)
-      d = mjwarp.put_data(mjm, mjd, njmax=mjd.nefc)
       d.qacc.zero_()
       d.qfrc_constraint.zero_()
       d.efc.force.zero_()
@@ -87,6 +101,13 @@ class SolverTest(parameterized.TestCase):
       if solver_ == mujoco.mjtSolver.mjSOL_CG:
         mjwarp.factor_m(m, d)
       mjwarp.solve(m, d)
+
+      def cost(qacc):
+        jaref = np.zeros(mjd.nefc, dtype=float)
+        cost = np.zeros(1)
+        mujoco.mj_mulJacVec(mjm, mjd, jaref, qacc)
+        mujoco.mj_constraintUpdate(mjm, mjd, jaref - mjd.efc_aref, cost, 0)
+        return cost
 
       mj_cost = cost(mjd.qacc)
       mjwarp_cost = cost(d.qacc.numpy()[0])
@@ -103,6 +124,7 @@ class SolverTest(parameterized.TestCase):
   )
   def test_solve_batch(self, cone, solver_, iterations, ls_iterations):
     """Tests solve (batch)."""
+
     mjm0, mjd0, _, _ = test_util.fixture(
       "humanoid/humanoid.xml",
       keyframe=0,
@@ -221,7 +243,7 @@ class SolverTest(parameterized.TestCase):
         ineq_J0,
         ineq_J1,
         ineq_J2,  # All inequality constraints
-        np.zeros((nefc_fill, mjm.nv)),  # Padding
+        np.full((nefc_fill, mjm.nv), np.nan),  # Padding
       ]
     )
 
@@ -233,9 +255,7 @@ class SolverTest(parameterized.TestCase):
     ineq_D1 = mjd1.efc_D[mjd1.ne :]
     ineq_D2 = mjd2.efc_D[mjd2.ne :]
 
-    efc_D_fill = np.concatenate(
-      [eq_D0, eq_D1, eq_D2, ineq_D0, ineq_D1, ineq_D2, np.zeros(nefc_fill)]
-    )
+    efc_D_fill = np.concatenate([eq_D0, eq_D1, eq_D2, ineq_D0, ineq_D1, ineq_D2, np.zeros(nefc_fill)])
 
     eq_aref0 = mjd0.efc_aref[: mjd0.ne]
     eq_aref1 = mjd1.efc_aref[: mjd1.ne]
@@ -341,32 +361,26 @@ class SolverTest(parameterized.TestCase):
 
       # Get world 1 forces
       world1_eq_forces = d.efc.force.numpy()[mjd0.ne : mjd0.ne + mjd1.ne]
-      world1_ineq_forces = d.efc.force.numpy()[
-        ne_active + nieq0 : ne_active + nieq0 + nieq1
-      ]
+      world1_ineq_forces = d.efc.force.numpy()[ne_active + nieq0 : ne_active + nieq0 + nieq1]
       world1_forces = np.concatenate([world1_eq_forces, world1_ineq_forces])
       _assert_eq(world1_forces, mjd1.efc_force, "efc_force1")
 
       # Get world 2 forces
       world2_eq_forces = d.efc.force.numpy()[mjd0.ne + mjd1.ne : ne_active]
-      world2_ineq_forces = d.efc.force.numpy()[
-        ne_active + nieq0 + nieq1 : ne_active + nieq0 + nieq1 + nieq2
-      ]
+      world2_ineq_forces = d.efc.force.numpy()[ne_active + nieq0 + nieq1 : ne_active + nieq0 + nieq1 + nieq2]
       world2_forces = np.concatenate([world2_eq_forces, world2_ineq_forces])
       _assert_eq(world2_forces, mjd2.efc_force, "efc_force2")
 
-  @parameterized.parameters(1, 2)
-  def test_frictionloss(self, keyframe):
+  def test_frictionloss(self):
     """Tests solver with frictionloss."""
-    # TODO(team): test tendon frictionloss
-    # TODO(team): test keyframe 2
-    _, mjd, m, d = test_util.fixture("constraints.xml", keyframe=keyframe)
-    mjwarp.solve(m, d)
+    for keyframe in range(3):
+      _, mjd, m, d = test_util.fixture("constraints.xml", keyframe=keyframe)
+      mjwarp.solve(m, d)
 
-    _assert_eq(d.nf.numpy()[0], mjd.nf, "nf")
-    _assert_eq(d.qacc.numpy()[0], mjd.qacc, "qacc")
-    _assert_eq(d.qfrc_constraint.numpy()[0], mjd.qfrc_constraint, "qfrc_constraint")
-    _assert_eq(d.efc.force.numpy()[: mjd.nefc], mjd.efc_force, "efc_force")
+      _assert_eq(d.nf.numpy()[0], mjd.nf, "nf")
+      _assert_eq(d.qacc.numpy()[0], mjd.qacc, "qacc")
+      _assert_eq(d.qfrc_constraint.numpy()[0], mjd.qfrc_constraint, "qfrc_constraint")
+      _assert_eq(d.efc.force.numpy()[: mjd.nefc], mjd.efc_force, "efc_force")
 
 
 if __name__ == "__main__":

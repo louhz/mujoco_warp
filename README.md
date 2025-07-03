@@ -2,12 +2,16 @@
 
 MJWarp is a GPU-optimized version of the [MuJoCo](https://github.com/google-deepmind/mujoco) physics simulator, designed for NVIDIA hardware.
 
-> [!WARNING]
-> MJWarp is in its Alpha stage, with many features still missing and limited testing so far.
+> [!NOTE]
+> MJWarp is in Beta and under active development:
+> * MJWarp developers will triage and respond to [bug report and feature requests](https://github.com/google-deepmind/mujoco_warp/issues).
+> * MJWarp is mostly feature complete but requires performance optimization, documentation, and testing.
+> * The intended audience during Beta are physics engine enthusiasts and learning framework integrators.
+> * Machine learning / robotics researchers who just want to train policies should wait for the [MJX](https://mujoco.readthedocs.io/en/stable/mjx.html) or [Isaac](https://isaac-sim.github.io/IsaacLab/main/index.html)/[Newton](https://github.com/newton-physics/newton) integrations, which are coming soon.
 
-MJWarp uses [NVIDIA Warp](https://github.com/NVIDIA/warp) to circumvent many of the [sharp bits](https://mujoco.readthedocs.io/en/stable/mjx.html#mjx-the-sharp-bits) in [MuJoCo MJX](https://mujoco.readthedocs.io/en/stable/mjx.html#). Once MJWarp exits Alpha, it will be integrated into both MJX and [Newton](https://developer.nvidia.com/blog/announcing-newton-an-open-source-physics-engine-for-robotics-simulation).
+MJWarp uses [NVIDIA Warp](https://github.com/NVIDIA/warp) to circumvent many of the [sharp bits](https://mujoco.readthedocs.io/en/stable/mjx.html#mjx-the-sharp-bits) in [MuJoCo MJX](https://mujoco.readthedocs.io/en/stable/mjx.html#). MJWarp will be integrated into both [MJX](https://mujoco.readthedocs.io/en/stable/mjx.html) and [Newton](https://github.com/newton-physics/newton).
 
-MJWarp is maintained by [Google Deepmind](https://deepmind.google/) and [NVIDIA](https://www.nvidia.com/).
+MJWarp is maintained by [Google DeepMind](https://deepmind.google/) and [NVIDIA](https://www.nvidia.com/).
 
 # Installing for development
 
@@ -19,16 +23,17 @@ source env/bin/activate
 pip install --upgrade pip
 ```
 
-During early development, MJWarp is on the bleeding edge - you should install Warp nightly:
+During early development, MJWarp is on the bleeding edge - you should install Warp and MuJoCo nightly:
 
 ```bash
 pip install warp-lang --pre --upgrade -f https://pypi.nvidia.com/warp-lang/
+pip install mujoco --pre --upgrade -f https://py.mujoco.org/
 ```
 
 Then install MJWarp in editable mode for local development:
 
 ```
-pip install -e .
+pip install -e .[dev,cuda]
 ```
 
 Now make sure everything is working:
@@ -39,30 +44,37 @@ pytest
 
 Should print out something like `XX passed in XX.XXs` at the end!
 
+If you plan to write Warp kernels for MJWarp, please use the `kernel_analyzer` vscode plugin located in `contrib/kernel_analyzer`.
+Please see the `README.md` there for details on how to install it and use it.  The same kernel analyzer will be run on any PR
+you open, so it's important to fix any issues it reports.
+
 # Compatibility
 
 The following features are implemented:
 
-| Category          | Feature                            |
-| ----------------- | ---------------------------------- |
-| Dynamics          | Forward only                       |
-| Transmission      | `JOINT`, `JOINTINPARENT`           |
-| Actuator Dynamics | `NONE`, `INTEGRATOR`, `FILTER`     |
-|                   | `FILTEREXACT`                      |
-| Actuator Gain     | `FIXED`, `AFFINE`                  |
-| Actuator Bias     | `NONE`, `AFFINE`                   |
-| Geom              | `PLANE`, `SPHERE`, `CAPSULE`       |
-| Constraint        | `LIMIT_JOINT`, `CONTACT_PYRAMIDAL` |
-|                   | `CONTACT_ELLIPTIC`                 |
-| Equality          | `CONNECT`, `WELD`, `JOINT`         |
-| Integrator        | `EULER`, `IMPLICITFAST`, `RK4`     |
-| Cone              | `PYRAMIDAL`, `ELLIPTIC`            |
-| Condim            | (1, 3, 4, 6), (1, 3)               |
-| Solver            | `CG`, `NEWTON`                     |
-| Fluid Model       | None                               |
-| Tendons           | Not yet implemented.               |
-| Sensors           | `JOINTPOS`, `JOINTVEL`,            |
-|                   | `ACTUATORFRC`                      |
+| Category          | Feature                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------|
+| Dynamics          | Forward, Inverse                                                                                         |
+| Transmission      | `JOINT`, `JOINTINPARENT`, `TENDON`,`BODY`, `SITE`                                                        |
+| Actuator Dynamics | `NONE`, `INTEGRATOR`, `FILTER`, `FILTEREXACT`, `MUSCLE`                                                  |
+| Actuator Gain     | `FIXED`, `AFFINE`, `MUSCLE`                                                                              |
+| Actuator Bias     | `NONE`, `AFFINE`, `MUSCLE`                                                                               |
+| Geom              | `PLANE`, `SPHERE`, `CAPSULE`, `ELLIPSOID`, `CYLINDER`, `BOX`, `HFIELD`, `MESH`, `SDF`                    |
+| Constraint        | `FRICTION JOINT`, `FRICTION TENDON`, `LIMIT_BALL`, `LIMIT_JOINT`, `LIMIT_TENDON`,                        |
+|                   | `CONTACT_PYRAMIDAL`, `CONTACT_ELLIPTIC`                                                                  |
+| Equality          | `CONNECT`, `WELD`, `JOINT`, `TENDON`                                                                     |
+| Integrator        | `EULER`, `IMPLICITFAST`, `RK4`                                                                           |
+| Cone              | `PYRAMIDAL`, `ELLIPTIC`                                                                                  |
+| Condim            | 1, 3, 4, 6                                                                                               |
+| Solver            | `CG`, `NEWTON`                                                                                           |
+| Fluid Model       | `BOX`                                                                                                    |
+| Tendons           | `FIXED`, `SITE`, `SPHERE`, `CYLINDER`, `PULLEY`                                                          |
+| Sensors           | `MAGNETOMETER`, `CAMPROJECTION`, `RANGEFINDER`, `JOINTPOS`, `TENDONPOS`, `ACTUATORPOS`, `BALLQUAT`,      |
+|                   | `JOINTLIMITPOS`, `TENDONLIMITPOS`, `FRAMEPOS`, `FRAMEXAXIS`, `FRAMEYAXIS`, `FRAMEZAXIS`, `FRAMEQUAT`,    |
+|                   | `SUBTREECOM`, `E_POTENTIAL`, `E_KINETIC`, `CLOCK`, `VELOCIMETER`, `GYRO`, `JOINTVEL`, `TENDONVEL`,       |
+|                   | `ACTUATORVEL`, `BALLANGVEL`, `JOINTLIMITVEL`, `TENDONLIMITVEL`, `FRAMELINVEL`, `FRAMEANGVEL`,            |
+|                   | `SUBTREELINVEL`, `SUBTREEANGMOM`,`TOUCH`, `ACCELEROMETER`, `FORCE`, `TORQUE`, `ACTUATORFRC`,             |
+|                   | `TENDONACTFRC`, `JOINTACTFRC`, `JOINTLIMITFRC`, `TENDONLIMITFRC`, `FRAMELINACC`, `FRAMEANGACC`           |
 
 # Benchmarking
 
