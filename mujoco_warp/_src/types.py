@@ -23,6 +23,7 @@ MJ_MAXVAL = mujoco.mjMAXVAL
 MJ_MINIMP = mujoco.mjMINIMP  # minimum constraint impedance
 MJ_MAXIMP = mujoco.mjMAXIMP  # maximum constraint impedance
 MJ_MAXCONPAIR = mujoco.mjMAXCONPAIR
+MJ_MINMU = mujoco.mjMINMU  # minimum friction
 
 
 # TODO(team): add check that all wp.launch_tiled 'block_dim' settings are configurable
@@ -270,6 +271,7 @@ class GeomType(enum.IntEnum):
     CYLINDER: cylinder
     BOX: box
     MESH: mesh
+    SDF: sdf
   """
 
   PLANE = mujoco.mjtGeom.mjGEOM_PLANE
@@ -988,7 +990,7 @@ class Model:
     geompair2hfgeompair: geom pair to geom pair with         (ngeom * (ngeom - 1) // 2,)
                          height field mapping
     block_dim: BlockDim
-    geom_type_pair: geom type id pairs for collisions
+    geom_pair_type_count: count of max number of each potential collision
     has_sdf_geom: whether the model contains SDF geoms
   """
 
@@ -1275,7 +1277,7 @@ class Model:
   actuator_trntype_body_adr: wp.array(dtype=int)  # warp only
   geompair2hfgeompair: wp.array(dtype=int)  # warp only
   block_dim: BlockDim  # warp only
-  geom_type_pair: tuple[int, ...]  # warp only
+  geom_pair_type_count: tuple[int, ...]  # warp only
   has_sdf_geom: bool  # warp only
 
 
