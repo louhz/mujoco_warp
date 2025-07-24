@@ -185,7 +185,7 @@ def _ray_plane(pos: wp.vec3, mat: wp.mat33, size: wp.vec3, pnt: wp.vec3, vec: wp
   # map to local frame
   lpnt, lvec = _ray_map(pos, mat, pnt, vec)
 
-  # z-vec not pointing torwards front face: reject
+  # z-vec not pointing towards front face: reject
   if lvec[2] > -MJ_MINVAL:
     return wp.inf
 
@@ -586,7 +586,11 @@ def _ray_mesh(
 
   # get mesh face and vertex data
   face_start = mesh_faceadr[data_id]
-  face_end = wp.where(data_id + 1 < mesh_faceadr.shape[0], mesh_faceadr[data_id + 1], nmeshface)
+
+  if data_id + 1 < mesh_faceadr.shape[0]:
+    face_end = mesh_faceadr[data_id + 1]
+  else:
+    face_end = nmeshface
 
   # iterate through all faces
   for i in range(face_start, face_end):

@@ -799,7 +799,9 @@ def crb(m: Model, d: Data):
 @wp.kernel
 def _tendon_armature(
   # Model:
+  opt_is_sparse: bool,
   dof_parentid: wp.array(dtype=int),
+  dof_Madr: wp.array(dtype=int),
   tendon_armature: wp.array2d(dtype=float),
   # Data in:
   ten_J_in: wp.array3d(dtype=float),
@@ -808,20 +810,36 @@ def _tendon_armature(
 ):
   worldid, tenid, dofid = wp.tid()
 
+  if opt_is_sparse:
+    madr_ij = dof_Madr[dofid]
+
   armature = tendon_armature[worldid, tenid]
+
+  if armature == 0.0:
+    return
+
   ten_Ji = ten_J_in[worldid, tenid, dofid]
 
-  wp.atomic_add(qM_out[worldid, dofid], dofid, armature * ten_Ji * ten_Ji)
+  if ten_Ji == 0.0:
+    return
 
   # sparse backward pass over ancestors
   dofidi = dofid
-  dofid = dof_parentid[dofid]
   while dofid >= 0:
-    ten_Jj = ten_J_in[worldid, tenid, dofid]
+    if dofid != dofidi:
+      ten_Jj = ten_J_in[worldid, tenid, dofid]
+    else:
+      ten_Jj = ten_Ji
+
     qMij = armature * ten_Jj * ten_Ji
 
-    wp.atomic_add(qM_out[worldid, dofidi], dofid, qMij)
-    wp.atomic_add(qM_out[worldid, dofid], dofidi, qMij)
+    if opt_is_sparse:
+      wp.atomic_add(qM_out[worldid, 0], madr_ij, qMij)
+      madr_ij += 1
+    else:
+      wp.atomic_add(qM_out[worldid, dofidi], dofid, qMij)
+      if dofidi != dofid:
+        wp.atomic_add(qM_out[worldid, dofid], dofidi, qMij)
 
     dofid = dof_parentid[dofid]
 
@@ -832,7 +850,7 @@ def tendon_armature(m: Model, d: Data):
   wp.launch(
     _tendon_armature,
     dim=(d.nworld, m.ntendon, m.nv),
-    inputs=[m.dof_parentid, m.tendon_armature, d.ten_J],
+    inputs=[m.opt.is_sparse, m.dof_parentid, m.dof_Madr, m.tendon_armature, d.ten_J],
     outputs=[d.qM],
   )
 
@@ -891,7 +909,7 @@ def _qLDiag_div(
 
 
 def _factor_i_sparse(m: Model, d: Data, M: wp.array3d(dtype=float), L: wp.array3d(dtype=float), D: wp.array2d(dtype=float)):
-  """Sparse L'*D*L factorizaton of inertia-like matrix M, assumed spd."""
+  """Sparse L'*D*L factorization of inertia-like matrix M, assumed spd."""
   wp.launch(_copy_CSR, dim=(d.nworld, m.nC), inputs=[m.mapM2M, M], outputs=[L])
 
   for i in reversed(range(len(m.qLD_updates))):
@@ -903,7 +921,7 @@ def _factor_i_sparse(m: Model, d: Data, M: wp.array3d(dtype=float), L: wp.array3
 
 @cache_kernel
 def _tile_cholesky_factorize(tile: TileSet):
-  """Returns a kernel for dense Cholesky factorizaton of a tile."""
+  """Returns a kernel for dense Cholesky factorization of a tile."""
 
   @nested_kernel
   def cholesky_factorize(
@@ -926,7 +944,7 @@ def _tile_cholesky_factorize(tile: TileSet):
 
 
 def _factor_i_dense(m: Model, d: Data, M: wp.array, L: wp.array):
-  """Dense Cholesky factorizaton of inertia-like matrix M, assumed spd."""
+  """Dense Cholesky factorization of inertia-like matrix M, assumed spd."""
   for tile in m.qM_tiles:
     wp.launch_tiled(
       _tile_cholesky_factorize(tile),
@@ -939,7 +957,7 @@ def _factor_i_dense(m: Model, d: Data, M: wp.array, L: wp.array):
 
 @event_scope
 def factor_m(m: Model, d: Data):
-  """Factorizaton of inertia-like matrix M, assumed spd."""
+  """Factorization of inertia-like matrix M, assumed spd."""
   if m.opt.is_sparse:
     _factor_i_sparse(m, d, d.qM, d.qLD, d.qLDiagInv)
   else:
@@ -1581,6 +1599,7 @@ def _tendon_bias_qfrc(
 @event_scope
 def tendon_bias(m: Model, d: Data, qfrc: wp.array2d(dtype=float)):
   """Add bias force due to tendon armature."""
+  d.ten_Jdot.zero_()
   wp.launch(
     _tendon_dot,
     dim=(d.nworld, m.ntendon),
@@ -1610,6 +1629,7 @@ def tendon_bias(m: Model, d: Data, qfrc: wp.array2d(dtype=float)):
     ],
   )
 
+  d.ten_bias_coef.zero_()
   wp.launch(
     _tendon_bias_coef,
     dim=(d.nworld, m.ntendon, m.nv),
@@ -2419,7 +2439,7 @@ def solve_m(m: Model, d: Data, x: wp.array2d(dtype=float), y: wp.array2d(dtype=f
 
 @cache_kernel
 def _tile_cholesky_factorize_solve(tile: TileSet):
-  """Returns a kernel for dense Cholesky factorizaton and backsubstitution of a tile."""
+  """Returns a kernel for dense Cholesky factorization and backsubstitution of a tile."""
 
   @nested_kernel
   def cholesky_factorize_solve(
